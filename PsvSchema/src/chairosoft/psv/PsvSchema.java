@@ -97,6 +97,14 @@ public class PsvSchema
     
     public static final String ABSTRACT_SCHEMA_OBJECT_NAME = "AbstractSchemaObject";
     
+    
+    /**
+     * Command-line entry point for PsvSchema Java source code generation tool.
+     * Usage: java -jar PsvSchema.jar (schema file location) (package for generated source)
+     * @param args args[0] is the location of the schema file
+     *           ; args[1] is the package to use in the generated Java source code.
+     * @throws Exception if any unhandled exception occurs
+     */
     public static void main(String[] args)
         throws Exception
     {
@@ -108,6 +116,15 @@ public class PsvSchema
         PsvRecordSet schemaRecordSet = PsvRecordSet.readFrom(schemaFile, PsvSchemaRecord.EXPECTED_VALUE_COUNT);
         Map<String, List<PsvSchemaRecord>> psvSchemaRecordsByTableName = schemaRecordSet.records.stream()
             .map(psvRecord -> new PsvSchemaRecord(psvRecord))
+            .map(r -> new PsvSchemaRecord(
+                r.isExtendable, 
+                nonKeywordOf(r.tableName), 
+                nonKeywordOf(r.parentTableName, ABSTRACT_SCHEMA_OBJECT_NAME),
+                nonKeywordOf(r.columnName),
+                getValidType(r.type),
+                r.isPartOfPrimaryKey,
+                r.isRequired
+            ))
             .collect(Collectors.groupingBy(psr -> psr.tableName));
         System.out.println(" done!");
         
@@ -138,12 +155,12 @@ public class PsvSchema
                 out.indentln("{");
                 out.tabIn();
                 {
-                    out.indentln("protected Row __row;");
+                    out.indentln("protected Row __row = null;");
                     out.indentln("public Row getRow() { this.syncRow(); return this.__row; }");
-                    out.indentln("");
-                    out.indentln("protected void syncRow() { }");
-                    //String abstractSchemaObjectConstructor = String.format("protected %s() { this.__row = TODO; }", ABSTRACT_SCHEMA_OBJECT_NAME);
-                    //out.indentln(abstractSchemaObjectConstructor);
+                    out.indentln("protected abstract void syncRow();");
+                    // out.indentln("");
+                    // String abstractSchemaObjectConstructor = String.format("protected %s() { this.__row = TODO; }", ABSTRACT_SCHEMA_OBJECT_NAME);
+                    // out.indentln(abstractSchemaObjectConstructor);
                 }
                 out.tabOut();
                 out.indentln("}");
@@ -154,19 +171,10 @@ public class PsvSchema
             {
                 List<PsvSchemaRecord> records = psvSchemaRecordsByTableName.get(tableName);
                 PsvSchemaRecord[] escapedRecords = records.stream()
-                    .map(r -> new PsvSchemaRecord(
-                        r.isExtendable, 
-                        nonKeywordOf(r.tableName), 
-                        nonKeywordOf(r.parentTableName, ABSTRACT_SCHEMA_OBJECT_NAME),
-                        nonKeywordOf(r.columnName),
-                        getValidType(r.type),
-                        r.isPartOfPrimaryKey,
-                        r.isRequired
-                    ))
                     .toArray(PsvSchemaRecord[]::new);
-                String[] commas = IntStream.range(0, escapedRecords.length)
-                    .mapToObj(i -> i + 1 == escapedRecords.length ? "" : ",")
-                    .toArray(String[]::new);
+                PsvSchemaRecord[] nonBlankEscapedRecords = Stream.of(escapedRecords)
+                    .filter(r -> nonKeywordOf(r.columnName).length() > 0)
+                    .toArray(PsvSchemaRecord[]::new);
                 PsvSchemaRecord schemaRecord = escapedRecords[0];
                 String finalDescriptor = schemaRecord.isExtendable ? "" : " final";
                 String className = schemaRecord.tableName;
@@ -181,14 +189,17 @@ public class PsvSchema
                     String tableDeclarationStart = String.format("public static final Table TABLE = new Table(\"%s\", %s, %s, new Column[] {", className, schemaRecord.isExtendable, parentReference);
                     out.indentln(tableDeclarationStart);
                     out.tabIn();
-                    for (int i = 0; i < escapedRecords.length; ++i)
+                    for (int i = 0; i < nonBlankEscapedRecords.length; ++i)
                     {
-                        PsvSchemaRecord escaped = escapedRecords[i];
-                        if (escaped.columnName.length() == 0) { continue; }
-                        String comma = commas[i];
-                        String columnType = getColumnType(records.get(i).type);
+                        PsvSchemaRecord escaped = nonBlankEscapedRecords[i];
+                        String comma = ((i + 1) == nonBlankEscapedRecords.length) ? "" : ",";
+                        String columnType = getColumnType(escapedRecords[1].type);
                         String columnInstantiation = String.format("new Column(\"%s\", %s, %s, %s)%s", escaped.columnName, columnType, escaped.isPartOfPrimaryKey, escaped.isRequired, comma);
                         out.indentln(columnInstantiation);
+                    }
+                    if (nonBlankEscapedRecords.length == 0)
+                    {
+                        out.indentln("// No additional columns.");
                     }
                     out.tabOut();
                     out.indentln("});");
@@ -196,13 +207,32 @@ public class PsvSchema
                     out.indentln(typeDeclaration);
                     out.indentln("");
                 }
-                for (PsvSchemaRecord escaped : escapedRecords)
+                for (PsvSchemaRecord escaped : nonBlankEscapedRecords)
                 {
-                    if (escaped.columnName.length() == 0) { continue; }
                     String memberDeclaration = String.format("public %s %s;", escaped.type, escaped.columnName);
                     out.indentln(memberDeclaration);
                 }
                 {
+                    out.indentln("");
+                    
+                    List<PsvSchemaRecord> allColumns = new List<>();
+                    // for (PsvSchemaRecord = schemaRecord
+                    
+                    // TODO: figure out how to get all columns (including parent table columns) in a list
+                    
+                    
+                    
+                    
+                    String defaultConstructorDeclaration = String.format("public %s()", className);
+                    out.indentln(defaultConstructorDeclaration);
+                    out.indentln("{");
+                    out.tabIn();
+                    {
+                        // out.indentln("this(");
+                        // out.indentln(")");
+                    }
+                    out.tabOut();
+                    out.indentln("}");
                     out.indentln("");
                     out.indentln("@Override");
                     out.indentln("protected void syncRow()");
@@ -211,10 +241,9 @@ public class PsvSchema
                     {
                         out.indentln("base.syncRow();");
                     }
-                    for (int i = 0; i < escapedRecords.length; ++i)
+                    for (int i = 0; i < nonBlankEscapedRecords.length; ++i)
                     {
-                        PsvSchemaRecord escaped = escapedRecords[i];
-                        if (escaped.columnName.length() == 0) { continue; }
+                        PsvSchemaRecord escaped = nonBlankEscapedRecords[i];
                         String originalValueExpression = String.format("this.%s", escaped.columnName);
                         String columnValueExpression = String.format("this.__row.getValue(\"%s\")", records.get(i).columnName);
                         String valueParseExpression = getValueParseStatement(escaped.type, originalValueExpression, columnValueExpression);
