@@ -9,22 +9,13 @@
 
 package chairosoft.psv;
 
-import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileNotFoundException;
-import java.io.FileWriter;
-import java.io.IOException;
 import java.io.PrintWriter;
-import java.io.Writer;
-
-import java.util.Arrays;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.TreeSet;
-import java.util.stream.IntStream;
-import java.util.stream.Stream;
+import java.util.*;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 public class PsvSchema
 {
@@ -32,7 +23,7 @@ public class PsvSchema
     {
         private int indent = 0;
         private String currentTab = "";
-        private void setTab() { currentTab = ""; for (int i = 0; i < this.indent; ++i) { currentTab += "\t"; } };
+        private void setTab() { currentTab = ""; for (int i = 0; i < this.indent; ++i) { currentTab += "\t"; } }
         public final void tabIn() { this.indent++; setTab(); }
         public final void tabOut() { this.indent--; setTab(); }
         
@@ -100,22 +91,25 @@ public class PsvSchema
     
     /**
      * Command-line entry point for PsvSchema Java source code generation tool.
-     * Usage: java -jar PsvSchema.jar (schema file location) (package for generated source)
+     * Usage: java -jar PsvSchema.jar (schema file location) (output source root) (package for generated source)
      * @param args args[0] is the location of the schema file
-     *           ; args[1] is the package to use in the generated Java source code.
+     *           ; args[1] is the location of the output source root
+     *           ; args[2] is the package to use in the generated Java source code.
      * @throws Exception if any unhandled exception occurs
      */
-    public static void main(String[] args)
-        throws Exception
-    {
-        String fileLocation = args[0];
-        File schemaFile = new File(fileLocation);
-        
+    public static void main(String[] args) throws Exception {
+        File schemaFile = new File(args[0]);
+        File outputSourceRoot = new File(args[1]);
+        String packageName = args[2];
+        doMain(schemaFile, outputSourceRoot, packageName);
+    }
+    
+    public static void doMain(File schemaFile, File outputSourceRoot, String packageName) throws Exception {
         System.out.printf("Reading from %s...", schemaFile);
         System.out.flush();
         PsvRecordSet schemaRecordSet = PsvRecordSet.readFrom(schemaFile, PsvSchemaRecord.EXPECTED_VALUE_COUNT);
         Map<String, List<PsvSchemaRecord>> psvSchemaRecordsByTableName = schemaRecordSet.records.stream()
-            .map(psvRecord -> new PsvSchemaRecord(psvRecord))
+            .map(PsvSchemaRecord::new)
             .map(r -> new PsvSchemaRecord(
                 r.isExtendable, 
                 nonKeywordOf(r.tableName), 
@@ -128,8 +122,13 @@ public class PsvSchema
             .collect(Collectors.groupingBy(psr -> psr.tableName));
         System.out.println(" done!");
         
-        String genFileLocation = fileLocation + ".java";
-        File genFile = new File(genFileLocation);
+        String packageRelativeLocation = packageName.replaceAll(Pattern.quote("."), File.separator);
+        String genFileName = schemaFile.getName() + ".java";
+        File packageAbsoluteLocation = new File(outputSourceRoot, packageRelativeLocation);
+        if (!packageAbsoluteLocation.mkdirs()) {
+            throw new FileNotFoundException("Could not create file: " + packageAbsoluteLocation);
+        }
+        File genFile = new File(packageAbsoluteLocation, genFileName);
         
         System.out.printf("Writing to %s...", genFile);
         System.out.flush();
@@ -141,7 +140,7 @@ public class PsvSchema
             out.indentln(" */");
             out.indentln("");
             
-            String packageDeclaration = String.format("package %s;", args[1]);
+            String packageDeclaration = String.format("package %s;", packageName);
             out.indentln(packageDeclaration);
             out.indentln("");
             out.indentln("import chairosoft.psv.*;");
@@ -170,8 +169,7 @@ public class PsvSchema
             for (String tableName : tableNames)
             {
                 List<PsvSchemaRecord> records = psvSchemaRecordsByTableName.get(tableName);
-                PsvSchemaRecord[] escapedRecords = records.stream()
-                    .toArray(PsvSchemaRecord[]::new);
+                PsvSchemaRecord[] escapedRecords = records.toArray(new PsvSchemaRecord[0]);
                 PsvSchemaRecord[] nonBlankEscapedRecords = Stream.of(escapedRecords)
                     .filter(r -> nonKeywordOf(r.columnName).length() > 0)
                     .toArray(PsvSchemaRecord[]::new);
